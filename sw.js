@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gearboxbartar-acc-v2';
+const CACHE_NAME = 'gearboxbartar-acc-v3';
 const ASSETS = [
   './',
   './index.html',

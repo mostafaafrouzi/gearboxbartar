@@ -153,7 +153,7 @@
     position: fixed;
     bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     left: 50%;
-    transform: translateX(-50%) translateY(120%);
+    transform: translateX(-50%) translateY(12px);
     background: var(--ink);
     color: #fff;
     padding: 10px 16px;
@@ -163,14 +163,22 @@
     max-width: min(92vw, 400px);
     text-align: center;
     box-shadow: 0 8px 24px rgba(0,0,0,0.2);
-    transition: transform 0.25s ease;
+    transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
     justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
-  #toast.show { transform: translateX(-50%) translateY(0); }
+  #toast.show {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+  }
   #toast button {
     background: var(--gold-accent);
     border: none;
@@ -430,6 +438,7 @@ var journalSearchQuery = '';
 var lastUndoDelete = null;
 var undoDeleteTimer = null;
 var showBackupJsonPreview = false;
+var toastHideTimer = null;
 
 function esc(s){
   if(s === undefined || s === null) return '';
@@ -441,9 +450,19 @@ function esc(s){
 }
 function escAttr(s){ return esc(s).replace(/'/g,'&#39;'); }
 
+function hideToast(){
+  clearTimeout(toastHideTimer);
+  toastHideTimer = null;
+  var el = document.getElementById('toast');
+  if(!el) return;
+  el.classList.remove('show');
+  el.setAttribute('aria-hidden', 'true');
+}
+
 function showToast(message, undoFn){
   var el = document.getElementById('toast');
   if(!el) return;
+  hideToast();
   el.innerHTML = '';
   var span = document.createElement('span');
   span.textContent = message;
@@ -452,15 +471,20 @@ function showToast(message, undoFn){
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = 'بازگردانی';
-    btn.onclick = function(){
+    btn.onclick = function(e){
+      e.stopPropagation();
       undoFn();
-      el.classList.remove('show');
+      hideToast();
     };
     el.appendChild(btn);
   }
+  el.setAttribute('aria-hidden', 'false');
   el.classList.add('show');
-  clearTimeout(el._hideTimer);
-  el._hideTimer = setTimeout(function(){ el.classList.remove('show'); }, undoFn ? 8000 : 3500);
+  el.onclick = function(){
+    if(!undoFn) hideToast();
+  };
+  var duration = undoFn ? 8000 : 3500;
+  toastHideTimer = setTimeout(hideToast, duration);
 }
 
 function isSecondaryTab(tab){
@@ -932,6 +956,7 @@ function saveData(){
 
 function switchTab(tab, opts){
   opts = opts || {};
+  hideToast();
   if(tab === 'new' && opts.formType) formType = opts.formType;
   activeTab = tab;
   if(tab !== 'list') journalSearchQuery = '';
@@ -945,6 +970,7 @@ function switchTab(tab, opts){
 }
 
 function gotoTabFromMore(tab){
+  hideToast();
   activeTab = tab;
   editingTxId = null;
   render();
@@ -2304,7 +2330,8 @@ function attachHandlers(){
         var d = JSON.parse(txt);
         if(!confirm('اطلاعات فعلی با این نسخه جایگزین شود؟')) return;
         applyImportData(d);
-        saveData(); render();
+        saveData();
+        switchTab('dashboard');
         showToast('اطلاعات بازیابی شد.');
       } catch(e){ alert('کد وارد شده نامعتبر است.'); }
     };
@@ -2321,7 +2348,9 @@ function attachHandlers(){
           var d = JSON.parse(ev.target.result);
           if(!confirm('اطلاعات فعلی با این فایل جایگزین شود؟')) return;
           applyImportData(d);
-          saveData(); render();
+          saveData();
+          e.target.value = '';
+          switchTab('dashboard');
           showToast('فایل پشتیبان بارگذاری شد.');
         } catch(err){ alert('فایل نامعتبر است.'); }
       };
