@@ -1,0 +1,22 @@
+/* IRANSansX (Eco) — Regular & Bold */
+@font-face {
+  font-family: IRANSansX;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('woff2/IRANSansX-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: IRANSansX;
+  font-style: normal;
+  font-weight: 700;
+  src: url('woff2/IRANSansX-Bold.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: IRANSansX;
+  font-style: normal;
+  font-weight: 800;
+  src: url('woff2/IRANSansX-Bold.woff2') format('woff2');
+  font-display: swap;
+}

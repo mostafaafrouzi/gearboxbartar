@@ -1,0 +1,26 @@
+{
+  "name": "دفتر مالی گیربکس اتوماتیک برتر",
+  "short_name": "حسابداری برتر",
+  "description": "دفتر مالی ساده تعمیرگاه — داده روی دستگاه شما ذخیره می‌شود.",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F2F5FA",
+  "theme_color": "#14284B",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
