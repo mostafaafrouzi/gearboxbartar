@@ -2314,7 +2314,11 @@ function renderBackup(){
     ? ('<textarea id="backupTextarea" style="height:110px;font-size:11px;direction:ltr;margin-top:8px;" readonly>' + esc(rawJson) + '</textarea>')
     : '';
 
-  return '<div class="info-banner">' +
+  var pwaNote = isInstalledPwa()
+    ? '<div class="info-banner" style="border-color:var(--green-primary);background:var(--green-soft);color:var(--green-primary);"><strong>نسخه نصب‌شده:</strong> داده این آیکن جدا از تب مرورگر است. برای انتقال، فایل پشتیبان را در مرورگر بگیرید و اینجا بازیابی کنید.</div>'
+    : '';
+  return pwaNote +
+  '<div class="info-banner">' +
     '<strong>توجه:</strong> این نسخه آنلاین روی هر گوشی/مرورگر جداگانه ذخیره می‌کند. برای جابه‌جایی بین دستگاه‌ها، فایل پشتیبان را در تلگرام یا Drive نگه دارید و اینجا بازیابی کنید.' +
   '</div>' +
   '<div class="card">' +
@@ -3166,13 +3170,58 @@ document.addEventListener('touchend', function(e){
   }
 }, { passive: true });
 
+function isInstalledPwa(){
+  return window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    (window.navigator.standalone === true);
+}
+
+function maybeShowPwaStorageHint(){
+  if(!isInstalledPwa()) return;
+  if(safeStorageGet('pwa_storage_hint_seen') === '1') return;
+  var hasData = transactions.length > 0 || jobs.length > 0;
+  if(hasData){
+    safeStorageSet('pwa_storage_hint_seen', '1');
+    return;
+  }
+  setTimeout(function(){
+    if(safeStorageGet('pwa_storage_hint_seen') === '1') return;
+    alert(
+      'نسخه نصب‌شده (آیکن روی صفحهٔ اصلی) جدا از مرورگر است.\n\n' +
+      'اگر قبلاً در Chrome/Safari کار می‌کرد، همان داده اینجا نیست مگر فایل پشتیبان را از منوی «بیشتر → پشتیبان‌گیری» بازیابی کنید.\n\n' +
+      'پشتیبان‌گیری و دانلود در نسخه نصب‌شده هم فعال است.'
+    );
+    safeStorageSet('pwa_storage_hint_seen', '1');
+  }, 800);
+}
+
 if('serviceWorker' in navigator){
   window.addEventListener('load', function(){
-    navigator.serviceWorker.register('./sw.js').catch(function(){});
+    navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' }).then(function(reg){
+      reg.update();
+      if(reg.waiting && navigator.serviceWorker.controller){
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+      reg.addEventListener('updatefound', function(){
+        var nw = reg.installing;
+        if(!nw) return;
+        nw.addEventListener('statechange', function(){
+          if(nw.state === 'installed' && navigator.serviceWorker.controller){
+            nw.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      });
+    }).catch(function(){});
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if(window.__swReloading) return;
+      window.__swReloading = true;
+      window.location.reload();
+    });
   });
 }
 
 loadData();
+maybeShowPwaStorageHint();
 </script>
 </body>
 </html>
