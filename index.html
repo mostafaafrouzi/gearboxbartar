@@ -546,6 +546,65 @@ function markBackupDone(){
   safeStorageSet(BACKUP_META_KEY, new Date().toISOString());
 }
 
+function stringifyBackupPayload(){
+  try {
+    return JSON.stringify(buildExportPayload(), null, 2);
+  } catch(err){
+    var slim = buildExportPayload();
+    slim.smsQueue = (smsQueue || []).map(function(q){
+      return {
+        id: q.id, campaignId: q.campaignId, jobId: q.jobId, status: q.status,
+        createdAt: q.createdAt, phone: q.phone, customerName: q.customerName,
+        plate: q.plate, reason: q.reason, message: q.message, sentAt: q.sentAt, lastError: q.lastError
+      };
+    });
+    slim.smsLog = (smsLog || []).slice(-100);
+    return JSON.stringify(slim, null, 2);
+  }
+}
+
+function getBackupFilename(){
+  return 'gearboxbartar-backup-' + todayStr() + '.json';
+}
+
+function downloadBackupFile(dataStr, filename){
+  filename = filename || getBackupFilename();
+  var blob = new Blob(['\uFEFF' + dataStr], { type: 'application/json;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){
+    try { document.body.removeChild(a); } catch(e){}
+    URL.revokeObjectURL(url);
+  }, 500);
+}
+
+function runBackupExport(opts){
+  opts = opts || {};
+  var dataStr = stringifyBackupPayload();
+  var filename = getBackupFilename();
+  markBackupDone();
+  downloadBackupFile(dataStr, filename);
+  if(opts.tryShare){
+    try {
+      var file = new File([dataStr], filename, { type: 'application/json' });
+      if(navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))){
+        navigator.share({
+          title: 'پشتیبان حسابداری گیربکس برتر',
+          text: 'فایل پشتیبان مورخ ' + faDate(todayStr()),
+          files: [file]
+        }).catch(function(){});
+      }
+    } catch(e){}
+  }
+  return dataStr;
+}
+
 function getLastBackupLabel(){
   var iso = safeStorageGet(BACKUP_META_KEY);
   if(!iso) return 'هنوز پشتیبان گرفته نشده';
@@ -2250,7 +2309,7 @@ function renderSms(){
 }
 
 function renderBackup(){
-  var rawJson = JSON.stringify(buildExportPayload(), null, 2);
+  var rawJson = stringifyBackupPayload();
   var previewBlock = showBackupJsonPreview
     ? ('<textarea id="backupTextarea" style="height:110px;font-size:11px;direction:ltr;margin-top:8px;" readonly>' + esc(rawJson) + '</textarea>')
     : '';
@@ -2262,7 +2321,8 @@ function renderBackup(){
     '<h2>پشتیبان‌گیری</h2>' +
     '<p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">' + esc(getLastBackupLabel()) + '</p>' +
     '<div style="display:flex;flex-direction:column;gap:8px;">' +
-      '<button type="button" id="shareBackupBtn" class="btn btn-primary btn-lg">📤 ذخیره و اشتراک فایل پشتیبان</button>' +
+      '<button type="button" id="downloadBackupBtn" class="btn btn-primary btn-lg">📥 دانلود فایل پشتیبان (JSON)</button>' +
+      '<button type="button" id="shareBackupBtn" class="btn btn-outline btn-lg">📤 دانلود + اشتراک (تلگرام / واتساپ)</button>' +
       '<button type="button" id="copyJsonBtn" class="btn btn-outline btn-lg">📋 کپی JSON به کلیپ‌بورد</button>' +
       '<button type="button" id="toggleJsonPreviewBtn" class="btn btn-outline">' + (showBackupJsonPreview ? 'پنهان کردن متن JSON' : 'نمایش متن JSON (پیشرفته)') + '</button>' +
       '<button type="button" id="backupReminderBtn" class="btn btn-outline">' + (safeStorageGet(REMINDER_KEY) === '1' ? '✓ یادآوری هفتگی فعال است' : 'فعال‌سازی یادآوری هفتگی پشتیبان') + '</button>' +
@@ -2783,39 +2843,41 @@ function attachHandlers(){
   }
 
   // Backup & Restore
+  var downloadBackupBtn = document.getElementById('downloadBackupBtn');
+  if(downloadBackupBtn){
+    downloadBackupBtn.onclick = function(){
+      try {
+        runBackupExport({ tryShare: false });
+        showToast('فایل پشتیبان دانلود شد. پوشهٔ Downloads را بررسی کنید.');
+        render();
+      } catch(err){
+        showBackupJsonPreview = true;
+        alert('خطا در ساخت فایل: ' + (err.message || err) + '\nمتن JSON در صفحه نمایش داده می‌شود؛ آن را کپی کنید.');
+        render();
+      }
+    };
+  }
+
   var shareBackupBtn = document.getElementById('shareBackupBtn');
   if(shareBackupBtn){
     shareBackupBtn.onclick = function(){
-      var dataStr = JSON.stringify(buildExportPayload(), null, 2);
-      var filename = 'gearboxbartar-backup-' + todayStr() + '.json';
-      markBackupDone();
       try {
-        var file = new File([dataStr], filename, { type: 'application/json' });
-        if(navigator.canShare && navigator.canShare({ files: [file] })){
-          navigator.share({
-            title: 'پشتیبان حسابداری گیربکس برتر',
-            text: 'فایل پشتیبان مورخ ' + faDate(todayStr()),
-            files: [file]
-          }).then(function(){ showToast('پشتیبان آماده شد.'); }).catch(function(){});
-          render();
-          return;
-        }
-      } catch(e){}
-
-      var blob = new Blob([dataStr], { type: 'application/json' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      showToast('فایل پشتیبان دانلود شد.');
-      render();
+        runBackupExport({ tryShare: true });
+        showToast('فایل دانلود شد. اگر منوی اشتراک باز شد، تلگرام یا Drive را انتخاب کنید.');
+        render();
+      } catch(err){
+        showBackupJsonPreview = true;
+        alert('خطا در پشتیبان: ' + (err.message || err));
+        render();
+      }
     };
   }
 
   var copyJsonBtn = document.getElementById('copyJsonBtn');
   if(copyJsonBtn){
     copyJsonBtn.onclick = function(){
-      var dataStr = JSON.stringify(buildExportPayload(), null, 2);
+      var dataStr;
+      try { dataStr = stringifyBackupPayload(); } catch(err){ alert('خطا: ' + err.message); return; }
       markBackupDone();
       var done = function(){
         showToast('JSON در کلیپ‌بورد کپی شد.');
