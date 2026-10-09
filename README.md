@@ -22,6 +22,7 @@
 npx --yes serve .
 ```
 
-## فونت
+## فونت و برند
 
-IRANSansX (Eco) در `assets/fonts/iransansx/` — مطابق مجوز FontIran.
+- فونت: IRANSansX (Eco) در `assets/fonts/iransansx/` — مطابق مجوز FontIran.
+- لوگو و favicon از [gearboxbartar.com](https://www.gearboxbartar.com/) (`icons/logo-top.png`, `icons/favicon.png`).

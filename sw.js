@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gearboxbartar-acc-v1';
+const CACHE_NAME = 'gearboxbartar-acc-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -6,6 +6,8 @@ const ASSETS = [
   './assets/fonts/iransansx/fonts.css',
   './assets/fonts/iransansx/woff2/IRANSansX-Regular.woff2',
   './assets/fonts/iransansx/woff2/IRANSansX-Bold.woff2',
+  './icons/favicon.png',
+  './icons/logo-top.png',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];

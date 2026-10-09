@@ -7,9 +7,15 @@
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#F2F5FA",
-  "theme_color": "#14284B",
+  "background_color": "#F7F8FC",
+  "theme_color": "#ED145B",
   "icons": [
+    {
+      "src": "icons/favicon.png",
+      "sizes": "39x39",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "icons/icon-192.png",
       "sizes": "192x192",

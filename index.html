@@ -3,27 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#14284B">
+<meta name="theme-color" content="#ED145B">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="description" content="دفتر مالی داخلی تعمیرگاه گیربکس اتوماتیک برتر">
 <title>دفتر مالی | گیربکس اتوماتیک برتر</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="icon" href="icons/favicon.png" type="image/png" sizes="39x39">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="assets/fonts/iransansx/fonts.css">
 <style>
   :root {
-    --bg: #F2F5FA;
+    --bg: #F7F8FC;
     --card-bg: #FFFFFF;
-    --green-primary: #14284B;
-    --green-light: #1F4A8C;
-    --green-soft: #E8EEF8;
-    --green-subtle: #D3DEF0;
-    --gold-accent: #C5A059;
-    --gold-soft: #FBF7EE;
-    --ink: #121C33;
-    --ink-soft: #53617D;
-    --border: #D8E0EE;
+    --green-primary: #03324D;
+    --green-light: #0A4D73;
+    --green-soft: #E8F0F6;
+    --green-subtle: #D3E3EE;
+    --gold-accent: #ED145B;
+    --gold-soft: #FDE8F0;
+    --ink: #1E2228;
+    --ink-soft: #5C6570;
+    --border: #E5E8EF;
     --red-danger: #C0392B;
     --red-soft: #FDEDEC;
     --blue-accent: #2980B9;
@@ -40,15 +41,47 @@
     touch-action: pan-y;
   }
   header {
-    padding: 14px 16px;
-    background: linear-gradient(135deg, var(--green-primary), var(--green-light));
-    color: #fff;
+    padding: 10px 14px 12px;
+    background: var(--bg);
+    color: var(--ink);
     border-bottom: 3px solid var(--gold-accent);
-    box-shadow: 0 4px 12px rgba(20,40,75,0.25);
+    box-shadow: 0 2px 10px rgba(3, 50, 77, 0.08);
   }
-  header h1 { margin: 0; font-size: 17px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.3px; }
-  header p { margin: 3px 0 0; font-size: 11.5px; color: #D3DEF0; }
-  header .brand-sub { font-size: 10.5px; color: var(--gold-accent); margin-top: 2px; opacity: 0.95; }
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .brand-link { display: block; flex-shrink: 0; line-height: 0; }
+  .site-logo {
+    display: block;
+    max-height: 52px;
+    width: auto;
+    max-width: min(58vw, 210px);
+    height: auto;
+  }
+  .header-meta { text-align: left; min-width: 0; }
+  header .app-tag {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--green-primary);
+  }
+  header .brand-sub {
+    margin: 2px 0 0;
+    font-size: 10.5px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+  }
+  header #todayLabel {
+    margin: 6px 0 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--gold-accent);
+  }
   .bottom-nav {
     position: fixed;
     left: 0; right: 0; bottom: 0;
@@ -345,9 +378,16 @@
 <body>
 
 <header>
-  <h1>گیربکس اتوماتیک برتر</h1>
-  <p class="brand-sub">دفتر مالی داخلی تعمیرگاه — داده روی این دستگاه ذخیره می‌شود</p>
-  <p id="todayLabel"></p>
+  <div class="header-inner">
+    <a class="brand-link" href="https://www.gearboxbartar.com/" target="_blank" rel="noopener noreferrer" title="سایت گیربکس اتوماتیک برتر">
+      <img class="site-logo" src="icons/logo-top.png" width="210" height="52" alt="مجموعه گیربکس اتوماتیک برتر">
+    </a>
+    <div class="header-meta">
+      <p class="app-tag">دفتر مالی داخلی</p>
+      <p class="brand-sub">داده روی این دستگاه ذخیره می‌شود</p>
+      <p id="todayLabel"></p>
+    </div>
+  </div>
 </header>
 
 <main id="main"></main>
@@ -1393,7 +1433,7 @@ function renderPersons(){
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap;gap:6px;">' +
         '<span style="font-size:11.5px;color:var(--ink-soft);">' + p.entriesCount + ' معامله</span>' +
         '<div style="display:flex;gap:5px;">' +
-          (p.balance !== 0 ? '<button class="btn btn-sm btn-primary" data-direct-settle-person="' + p.name + '">' + (p.balance < 0 ? 'پرداخت بدهی' : 'وصول طلب') + '</button>' : '') +
+          (p.balance !== 0 ? '<button class="btn btn-sm btn-primary" data-direct-settle-person="' + escAttr(p.name) + '">' + (p.balance < 0 ? 'پرداخت بدهی' : 'وصول طلب') + '</button>' : '') +
           '<button class="btn btn-sm btn-outline" data-view-person="' + p.name + '">مشاهده کاردکس ❯</button>' +
         '</div>' +
       '</div>' +
