@@ -149,6 +149,32 @@
     cursor: pointer;
   }
   .more-menu-btn:active { background: var(--green-soft); }
+  .sms-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .sms-tabs button {
+    flex: 1;
+    min-width: 90px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .sms-tabs button.active { background: var(--green-soft); border-color: var(--green-primary); font-weight: 700; color: var(--green-primary); }
+  .sms-queue-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: #FAFBFE;
+  }
+  .sms-queue-card textarea {
+    min-height: 88px;
+    font-size: 12.5px;
+    margin-bottom: 8px;
+  }
+  .sms-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   #toast {
     position: fixed;
     bottom: calc(80px + env(safe-area-inset-bottom, 0px));
@@ -420,12 +446,12 @@ function safeStorageSet(key, val) {
   try { localStorage.setItem(key, val); } catch(e) { memStore[key] = val; }
 }
 
-var DB_VERSION = 15;
+var DB_VERSION = 16;
 var STORAGE_KEY = 'tamirgah_db_v15_gearboxbartar';
 var BACKUP_META_KEY = 'tamirgah_last_backup_iso';
 var REMINDER_KEY = 'tamirgah_backup_reminder';
 var TAB_ORDER = ['dashboard','new','list','jobs','more'];
-var SECONDARY_TABS = ['accounts','inventory','persons','pnl','backup'];
+var SECONDARY_TABS = ['accounts','inventory','persons','pnl','sms','backup'];
 var transactions = [];
 var jobs = [];
 var inventory = [];
@@ -439,6 +465,31 @@ var lastUndoDelete = null;
 var undoDeleteTimer = null;
 var showBackupJsonPreview = false;
 var toastHideTimer = null;
+var smsQueue = [];
+var smsLog = [];
+var smsUiView = 'queue';
+
+var DEFAULT_IPPANEL_SETTINGS = {
+  enabled: true,
+  apiKey: '',
+  fromNumber: '',
+  apiBase: 'https://edge.ippanel.com/v1',
+  shopName: 'گیربکس اتوماتیک برتر',
+  shopPhone: '02100000000',
+  daysAfterDelivery: 90,
+  kmInterval: 5000,
+  minDaysBetweenSamePhone: 60,
+  maxPerPhonePerYear: 3,
+  sendHourFrom: 9,
+  sendHourTo: 20,
+  messageTemplate:
+    '{سلام} {نام} عزیز،\n' +
+    'خودرو {مدل} ({پلاک}) در تاریخ {تاریخ_ترخیص} در {نام_تعمیرگاه} تعمیر/سرویس شد.\n' +
+    'یادآوری دوستانه: حدود {کیلومتر_سرویس_بعدی} کیلومتر (یا {روز_بعد} روز پس از ترخیص) برای تعویض روغن و سرویس دوره‌ای گیربکس سراغ ما بیا.\n' +
+    'تماس: {تلفن_تعمیرگاه}\n' +
+    '— {نام_تعمیرگاه}'
+};
+var ippanelSettings = JSON.parse(JSON.stringify(DEFAULT_IPPANEL_SETTINGS));
 
 function esc(s){
   if(s === undefined || s === null) return '';
@@ -511,15 +562,298 @@ function buildExportPayload(){
     transactions: transactions,
     jobs: jobs,
     inventory: inventory,
-    accounts: accounts
+    accounts: accounts,
+    ippanelSettings: ippanelSettings,
+    smsQueue: smsQueue,
+    smsLog: smsLog
   };
+}
+
+function mergeIppanelSettings(raw){
+  var base = JSON.parse(JSON.stringify(DEFAULT_IPPANEL_SETTINGS));
+  if(!raw || typeof raw !== 'object') return base;
+  Object.keys(base).forEach(function(k){
+    if(raw[k] !== undefined && raw[k] !== null) base[k] = raw[k];
+  });
+  return base;
 }
 
 function applyImportData(d){
   transactions = d.transactions || [];
-  jobs = d.jobs || [];
+  jobs = (d.jobs || []).map(normalizeJobRecord);
   inventory = d.inventory || [];
   accounts = d.accounts && d.accounts.length > 0 ? d.accounts : accounts;
+  ippanelSettings = mergeIppanelSettings(d.ippanelSettings);
+  smsQueue = d.smsQueue || [];
+  smsLog = d.smsLog || [];
+}
+
+function normalizeJobRecord(j){
+  j = j || {};
+  if(!j.smsCampaigns) j.smsCampaigns = {};
+  if(j.smsOptOut === undefined) j.smsOptOut = false;
+  if(!j.customerPhone) j.customerPhone = '';
+  if(j.status === 'done' && !j.deliveredDate) j.deliveredDate = j.createdDate || todayStr();
+  if(j.status === 'done' && !j.deliveryKm && j.km) j.deliveryKm = j.km;
+  return j;
+}
+
+function daysBetweenIso(isoFrom, isoTo){
+  var a = new Date((isoFrom||todayStr()) + 'T12:00:00');
+  var b = new Date((isoTo||todayStr()) + 'T12:00:00');
+  return Math.max(0, Math.floor((b - a) / 86400000));
+}
+
+function parseKmValue(v){
+  var n = parseInt(String(v || '').replace(/[^0-9]/g, ''), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function normalizeIranPhone(raw){
+  var s = String(raw || '').trim().replace(/[۰-۹]/g, function(d){ return '۰۱۲۳۴۵۶۷۸۹'.indexOf(d); })
+    .replace(/[٠-٩]/g, function(d){ return '٠١٢٣٤٥٦٧٨٩'.indexOf(d); })
+    .replace(/[\s\-()]/g, '');
+  if(!s) return '';
+  if(s.indexOf('+98') === 0) return s;
+  if(s.indexOf('0098') === 0) return '+98' + s.slice(4);
+  if(s.indexOf('98') === 0 && s.length >= 12) return '+' + s;
+  if(s.indexOf('09') === 0 && s.length === 11) return '+98' + s.slice(1);
+  if(s.indexOf('9') === 0 && s.length === 10) return '+98' + s;
+  if(s.indexOf('0') === 0) return '+98' + s.slice(1);
+  return s.length >= 10 ? '+98' + s : '';
+}
+
+function renderSmsTemplate(template, job){
+  var settings = ippanelSettings;
+  var del = job.deliveredDate || job.createdDate || todayStr();
+  var km0 = parseKmValue(job.deliveryKm || job.km);
+  var kmNext = km0 > 0 ? km0 + (settings.kmInterval || 5000) : (settings.kmInterval || 5000);
+  var replacements = {
+    '{سلام}': 'سلام',
+    '{نام}': job.customer || 'مشتری',
+    '{پلاک}': job.plate || '—',
+    '{مدل}': job.carModel || '',
+    '{تاریخ_پذیرش}': faDate(job.createdDate),
+    '{تاریخ_ترخیص}': faDate(del),
+    '{نام_تعمیرگاه}': settings.shopName || 'تعمیرگاه',
+    '{کیلومتر_فعلی}': km0 ? faDigits(km0) : '—',
+    '{کیلومتر_سرویس_بعدی}': faDigits(kmNext),
+    '{روز_بعد}': faDigits(settings.daysAfterDelivery || 90),
+    '{تلفن_تعمیرگاه}': settings.shopPhone || ''
+  };
+  var msg = template || DEFAULT_IPPANEL_SETTINGS.messageTemplate;
+  Object.keys(replacements).forEach(function(k){ msg = msg.split(k).join(replacements[k]); });
+  return msg.trim();
+}
+
+function jobCampaignDone(job, campaignId){
+  return job.smsCampaigns && job.smsCampaigns[campaignId];
+}
+
+function hasRecentSmsToPhone(phone, minDays){
+  if(!phone) return false;
+  var today = todayStr();
+  for(var i = smsLog.length - 1; i >= 0; i--){
+    var L = smsLog[i];
+    if(L.phone !== phone || L.status !== 'sent' || !L.sentAt) continue;
+    if(daysBetweenIso(L.sentAt.slice(0, 10), today) < minDays) return true;
+  }
+  return false;
+}
+
+function countSmsToPhoneThisYear(phone){
+  var y = String(new Date().getFullYear());
+  var n = 0;
+  smsLog.forEach(function(L){
+    if(L.phone === phone && L.status === 'sent' && L.sentAt && String(L.sentAt).slice(0, 4) === y) n++;
+  });
+  return n;
+}
+
+function isSmsQuietHoursNow(){
+  var h = new Date().getHours();
+  var from = Number(ippanelSettings.sendHourFrom) || 9;
+  var to = Number(ippanelSettings.sendHourTo) || 20;
+  return h < from || h >= to;
+}
+
+function refreshSmsQueueSuggestions(){
+  if(!ippanelSettings.enabled) return 0;
+  var settings = ippanelSettings;
+  var today = todayStr();
+  var added = 0;
+  var campaignId = 'service_reminder';
+
+  jobs.forEach(function(job){
+    job = normalizeJobRecord(job);
+    if(job.status !== 'done' || job.smsOptOut) return;
+    if(!job.deliveredDate) return;
+    if(daysBetweenIso(job.deliveredDate, today) < (settings.daysAfterDelivery || 90)) return;
+    if(jobCampaignDone(job, campaignId)) return;
+
+    var phone = normalizeIranPhone(job.customerPhone);
+    if(!phone || phone.length < 12) return;
+
+    var dupPending = smsQueue.some(function(q){
+      return q.jobId === job.id && q.campaignId === campaignId && q.status === 'pending';
+    });
+    if(dupPending) return;
+
+    if(hasRecentSmsToPhone(phone, settings.minDaysBetweenSamePhone || 60)) return;
+    if(countSmsToPhoneThisYear(phone) >= (settings.maxPerPhonePerYear || 3)) return;
+
+    smsQueue.push({
+      id: 'smsq_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      campaignId: campaignId,
+      jobId: job.id,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      phone: phone,
+      customerName: job.customer || '',
+      plate: job.plate || '',
+      reason: daysBetweenIso(job.deliveredDate, today) + ' روز از ترخیص — یادآوری سرویس ~' + faDigits(settings.kmInterval || 5000) + ' کیلومتر',
+      message: renderSmsTemplate(settings.messageTemplate, job)
+    });
+    added++;
+  });
+  if(added) saveData();
+  return added;
+}
+
+function sendIppanelSms(phone, message){
+  var s = ippanelSettings;
+  if(!s.apiKey || !s.fromNumber){
+    return Promise.reject(new Error('کلید API یا شماره ارسال‌کننده تنظیم نشده است.'));
+  }
+  var url = String(s.apiBase || 'https://edge.ippanel.com/v1').replace(/\/$/, '') + '/api/send';
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': s.apiKey,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      sending_type: 'webservice',
+      from_number: s.fromNumber,
+      message: message,
+      params: { recipients: [phone] }
+    })
+  }).then(function(res){
+    return res.json().then(function(data){
+      if(!res.ok || (data.meta && data.meta.status === false)){
+        var errMsg = (data.meta && data.meta.message) ? data.meta.message : ('HTTP ' + res.status);
+        throw new Error(errMsg);
+      }
+      return data;
+    });
+  });
+}
+
+function approveAndSendSmsQueueItem(queueId){
+  var item = smsQueue.find(function(q){ return q.id === queueId; });
+  if(!item || item.status !== 'pending') return;
+  var ta = document.querySelector('textarea[data-sms-msg="' + queueId + '"]');
+  if(ta) item.message = ta.value.trim();
+
+  if(isSmsQuietHoursNow()){
+    if(!confirm('الان خارج از بازهٔ مجاز ارسال (ساعات شلوغی/شب) است. باز هم ارسال شود؟')) return;
+  }
+  if(!confirm('پیامک به ' + item.phone + ' ارسال شود؟\n\n' + item.message.slice(0, 120) + '...')) return;
+
+  item.status = 'sending';
+  render();
+
+  sendIppanelSms(item.phone, item.message).then(function(apiRes){
+    item.status = 'sent';
+    item.sentAt = new Date().toISOString();
+    item.apiResponse = apiRes && apiRes.data ? apiRes.data : apiRes;
+    var job = jobs.find(function(j){ return j.id === item.jobId; });
+    if(job){
+      if(!job.smsCampaigns) job.smsCampaigns = {};
+      job.smsCampaigns[item.campaignId] = { status: 'sent', at: item.sentAt };
+    }
+    smsLog.push({
+      id: 'smslog_' + Date.now(),
+      queueId: item.id,
+      jobId: item.jobId,
+      phone: item.phone,
+      message: item.message,
+      status: 'sent',
+      sentAt: item.sentAt,
+      campaignId: item.campaignId
+    });
+    smsQueue = smsQueue.filter(function(q){ return q.id !== item.id; });
+    saveData();
+    showToast('پیامک با موفقیت ارسال شد.');
+    render();
+  }).catch(function(err){
+    item.status = 'pending';
+    item.lastError = String(err.message || err);
+    smsLog.push({
+      id: 'smslog_' + Date.now(),
+      queueId: item.id,
+      jobId: item.jobId,
+      phone: item.phone,
+      message: item.message,
+      status: 'failed',
+      sentAt: new Date().toISOString(),
+      error: item.lastError,
+      campaignId: item.campaignId
+    });
+    saveData();
+    alert('ارسال ناموفق: ' + item.lastError + '\n\nاگر خطای CORS دیدید، از مرورگر دیگر استفاده کنید یا ارسال را از پنل آی‌پی‌پنل انجام دهید و دکمه «ثبت دستی ارسال» را بزنید.');
+    render();
+  });
+}
+
+function dismissSmsQueueItem(queueId, reason){
+  var item = smsQueue.find(function(q){ return q.id === queueId; });
+  if(!item) return;
+  var job = jobs.find(function(j){ return j.id === item.jobId; });
+  if(job){
+    if(!job.smsCampaigns) job.smsCampaigns = {};
+    job.smsCampaigns[item.campaignId] = { status: 'dismissed', at: new Date().toISOString(), reason: reason || '' };
+  }
+  smsLog.push({
+    id: 'smslog_' + Date.now(),
+    queueId: item.id,
+    jobId: item.jobId,
+    phone: item.phone,
+    message: item.message,
+    status: 'dismissed',
+    sentAt: new Date().toISOString(),
+    campaignId: item.campaignId,
+    note: reason || ''
+  });
+  smsQueue = smsQueue.filter(function(q){ return q.id !== queueId; });
+  saveData();
+  showToast('پیام از صف حذف شد (بدون ارسال).');
+  render();
+}
+
+function markSmsQueueItemSentManually(queueId){
+  var item = smsQueue.find(function(q){ return q.id === queueId; });
+  if(!item) return;
+  if(!confirm('این پیام را بدون API به‌عنوان «ارسال‌شده» ثبت می‌کنید؟')) return;
+  var job = jobs.find(function(j){ return j.id === item.jobId; });
+  if(job){
+    if(!job.smsCampaigns) job.smsCampaigns = {};
+    job.smsCampaigns[item.campaignId] = { status: 'sent_manual', at: new Date().toISOString() };
+  }
+  smsLog.push({
+    id: 'smslog_' + Date.now(),
+    queueId: item.id,
+    jobId: item.jobId,
+    phone: item.phone,
+    message: item.message,
+    status: 'sent_manual',
+    sentAt: new Date().toISOString(),
+    campaignId: item.campaignId
+  });
+  smsQueue = smsQueue.filter(function(q){ return q.id !== queueId; });
+  saveData();
+  showToast('به‌عنوان ارسال دستی ثبت شد.');
+  render();
 }
 
 function openSettlePersonModal(personName){
@@ -581,6 +915,7 @@ function renderMoreMenu(){
     { tab: 'inventory', label: 'انبار و قطعات', icon: '📦' },
     { tab: 'persons', label: 'کاردکس اشخاص', icon: '👤' },
     { tab: 'pnl', label: 'سود و زیان', icon: '📈' },
+    { tab: 'sms', label: 'پیامک مشتری (آی‌پی‌پنل)', icon: '📱' },
     { tab: 'backup', label: 'پشتیبان‌گیری', icon: '💾' }
   ];
   return '<div class="card"><h2>منوی بیشتر</h2>' +
@@ -1016,6 +1351,7 @@ function render(){
     else if(activeTab === 'persons') main.innerHTML = renderPersons();
     else if(activeTab === 'dashboard') main.innerHTML = renderDashboard();
     else if(activeTab === 'pnl') main.innerHTML = renderPnL();
+    else if(activeTab === 'sms') main.innerHTML = renderSms();
     else if(activeTab === 'backup') main.innerHTML = renderBackup();
     attachHandlers();
   } catch(err) {
@@ -1344,7 +1680,14 @@ function renderJobs(){
         '<button class="btn btn-sm btn-excel" id="exportJobExcelBtn">📥 خروجی اکسل این خودرو</button>' +
       '</div>' +
       '<h2>شناسنامه خودرو: ' + j.carModel + ' (' + (j.plate || 'بدون پلاک') + ')</h2>' +
-      '<div class="tx-meta">مالک: <b>' + j.customer + '</b> | تاریخ پذیرش: ' + faDate(j.createdDate) + ' | وضعیت: ' + (j.status==='done'?'ترخیص‌شده':'در حال کار') + '</div>' +
+      '<div class="tx-meta">مالک: <b>' + esc(j.customer) + '</b> | پذیرش: ' + faDate(j.createdDate) +
+        (j.deliveredDate ? ' | ترخیص: ' + faDate(j.deliveredDate) : '') + ' | ' + (j.status==='done'?'ترخیص‌شده':'در حال کار') + '</div>' +
+      '<div class="row" style="margin-top:10px;">' +
+        '<div><label>موبایل مشتری (پیامک سرویس)</label><input type="tel" id="jobPhoneInput" dir="ltr" value="' + escAttr(j.customerPhone || '') + '" placeholder="0912..."></div>' +
+        '<div><label>کیلومتر هنگام ترخیص</label><input type="text" id="jobDeliveryKmInput" value="' + escAttr(j.deliveryKm || j.km || '') + '"></div>' +
+      '</div>' +
+      '<label style="margin-top:6px;"><input type="checkbox" id="jobSmsOptOut" ' + (j.smsOptOut ? 'checked' : '') + '> عدم ارسال پیامک برای این پرونده</label>' +
+      '<button type="button" class="btn btn-outline btn-sm" id="saveJobSmsMetaBtn" data-job-id="' + escAttr(j.id) + '" style="margin-top:8px;">ذخیره تماس و تنظیم پیامک</button>' +
       (j.complaint ? '<div class="tx-meta">ایراد: ' + j.complaint + '</div>' : '') +
       '<div class="stat-grid" style="margin-top:10px;">' +
         '<div class="stat good"><div class="label">درآمد فاکتورها</div><div class="value">' + fmt(p.income) + '</div></div>' +
@@ -1390,7 +1733,11 @@ function renderJobs(){
       '<div class="row">' +
         '<div><label>مالک خودرو</label><input type="text" name="customer" list="personsDatalist" placeholder="نام مشتری" required>' +
         '<datalist id="personsDatalist">' + getUniquePersonNames().map(function(p){ return '<option value="' + p + '">'; }).join('') + '</datalist></div>' +
+        '<div><label>موبایل مشتری</label><input type="tel" name="customerPhone" dir="ltr" placeholder="09121234567" inputmode="tel"></div>' +
+      '</div>' +
+      '<div class="row">' +
         '<div><label>کیلومتر</label><input type="text" name="km" placeholder="مثلاً: ۱۳۵۰۰۰"></div>' +
+        '<div></div>' +
       '</div>' +
       '<label>شرح ایراد</label><input type="text" name="complaint" placeholder="تقه دنده، روغن‌ریزی و...">' +
       '<button type="submit" class="btn btn-dark">پذیرش و تشکیل پرونده</button>' +
@@ -1812,6 +2159,96 @@ function renderPnL(){
   '</div>';
 }
 
+function renderSms(){
+  refreshSmsQueueSuggestions();
+  var pending = smsQueue.filter(function(q){ return q.status === 'pending'; });
+  var pendingHtml = pending.length === 0
+    ? '<div class="empty">پیام پیشنهادی در صف نیست. پس از ترخیص خودرو و گذشت مدت تنظیم‌شده، اینجا نمایش داده می‌شود.</div>'
+    : pending.map(function(q){
+        return '<div class="sms-queue-card" data-sms-card="' + escAttr(q.id) + '">' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px;">' +
+            '<div><b>' + esc(q.customerName || 'مشتری') + '</b> · ' + esc(q.plate || '—') + '<br>' +
+            '<span class="tx-meta" dir="ltr">' + esc(q.phone) + '</span></div>' +
+            '<span class="tag split">' + esc(q.reason) + '</span>' +
+          '</div>' +
+          '<label>متن پیام (قابل ویرایش قبل از ارسال)</label>' +
+          '<textarea class="sms-msg-edit" data-sms-msg="' + escAttr(q.id) + '">' + esc(q.message) + '</textarea>' +
+          '<div class="sms-actions">' +
+            '<button type="button" class="btn btn-sm btn-primary" data-sms-approve="' + escAttr(q.id) + '">✓ تأیید و ارسال</button>' +
+            '<button type="button" class="btn btn-sm btn-outline" data-sms-dismiss="' + escAttr(q.id) + '">رد (بدون ارسال)</button>' +
+            '<button type="button" class="btn btn-sm btn-outline" data-sms-manual="' + escAttr(q.id) + '">ثبت ارسال دستی</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+  var history = smsLog.slice().reverse().slice(0, 25);
+  var historyHtml = history.length === 0 ? '<div class="empty">هنوز تاریخچه‌ای ثبت نشده.</div>' :
+    history.map(function(L){
+      return '<div class="tx-item"><div class="tx-main"><div class="tx-cat">' + esc(L.status) + ' · ' + esc(L.phone) + '</div>' +
+        '<div class="tx-meta">' + faDate((L.sentAt||'').slice(0,10)) + (L.note ? ' · ' + esc(L.note) : '') + (L.error ? ' · ' + esc(L.error) : '') + '</div></div></div>';
+    }).join('');
+
+  var settingsForm = '';
+  if(smsUiView === 'settings'){
+    settingsForm = '<div class="card">' +
+      '<h2>تنظیمات آی‌پی‌پنل</h2>' +
+      '<p class="tx-meta">کلید API و شماره خط در فایل پشتیبان ذخیره می‌شود. ارسال خودکار انجام نمی‌شود؛ فقط پس از تأیید حسابدار.</p>' +
+      '<form id="ippanelSettingsForm">' +
+        '<label><input type="checkbox" name="enabled" ' + (ippanelSettings.enabled ? 'checked' : '') + '> فعال‌سازی پیشنهاد پیام (بدون ارسال خودکار)</label>' +
+        '<label>کلید API (Authorization)</label>' +
+        '<input type="password" name="apiKey" value="' + escAttr(ippanelSettings.apiKey) + '" placeholder="توکن پنل آی‌پی‌پنل" autocomplete="off">' +
+        '<label>شماره ارسال‌کننده (from_number)</label>' +
+        '<input type="text" name="fromNumber" dir="ltr" value="' + escAttr(ippanelSettings.fromNumber) + '" placeholder="+983000505">' +
+        '<label>آدرس API (پیش‌فرض Edge)</label>' +
+        '<input type="text" name="apiBase" dir="ltr" value="' + escAttr(ippanelSettings.apiBase) + '">' +
+        '<div class="row">' +
+          '<div><label>نام تعمیرگاه در پیام</label><input name="shopName" value="' + escAttr(ippanelSettings.shopName) + '"></div>' +
+          '<div><label>تلفن تماس در پیام</label><input name="shopPhone" dir="ltr" value="' + escAttr(ippanelSettings.shopPhone) + '"></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><label>روز پس از ترخیص برای پیشنهاد</label><input type="number" name="daysAfterDelivery" min="30" max="365" value="' + (ippanelSettings.daysAfterDelivery||90) + '"></div>' +
+          '<div><label>فاصله کیلومتر در متن (مثلاً ۵۰۰۰)</label><input type="number" name="kmInterval" min="1000" step="500" value="' + (ippanelSettings.kmInterval||5000) + '"></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><label>حداقل فاصله بین دو پیام به یک شماره (روز)</label><input type="number" name="minDaysBetweenSamePhone" min="14" value="' + (ippanelSettings.minDaysBetweenSamePhone||60) + '"></div>' +
+          '<div><label>حداکثر پیام به یک شماره در سال</label><input type="number" name="maxPerPhonePerYear" min="1" max="12" value="' + (ippanelSettings.maxPerPhonePerYear||3) + '"></div>' +
+        '</div>' +
+        '<div class="row">' +
+          '<div><label>ساعت مجاز ارسال از</label><input type="number" name="sendHourFrom" min="0" max="23" value="' + (ippanelSettings.sendHourFrom||9) + '"></div>' +
+          '<div><label>تا ساعت</label><input type="number" name="sendHourTo" min="0" max="23" value="' + (ippanelSettings.sendHourTo||20) + '"></div>' +
+        '</div>' +
+        '<label>الگوی متن پیام</label>' +
+        '<textarea name="messageTemplate" style="min-height:120px;font-size:12px;">' + esc(ippanelSettings.messageTemplate) + '</textarea>' +
+        '<p class="tx-meta">متغیرها: {نام} {پلاک} {مدل} {تاریخ_پذیرش} {تاریخ_ترخیص} {کیلومتر_سرویس_بعدی} {روز_بعد} {نام_تعمیرگاه} {تلفن_تعمیرگاه}</p>' +
+        '<button type="submit" class="btn btn-primary btn-lg">ذخیره تنظیمات</button>' +
+      '</form>' +
+    '</div>';
+  }
+
+  var historyBlock = '';
+  if(smsUiView === 'history'){
+    historyBlock = '<div class="card"><h2>تاریخچه پیام‌ها</h2>' + historyHtml + '</div>';
+  }
+
+  return '<div class="info-banner">' +
+    '<strong>ضد اسپم:</strong> پیام‌ها خودکار ارسال نمی‌شوند. هر روز صف را بررسی کنید؛ برای هر خودرو فقط یک‌بار یادآوری سرویس پیشنهاد می‌شود؛ فاصله و سقف سالانه رعایت می‌شود؛ مشتری می‌تواند در پرونده خودرو «عدم پیامک» بزند.' +
+  '</div>' +
+  '<div class="sms-tabs">' +
+    '<button type="button" class="' + (smsUiView==='queue'?'active':'') + '" data-sms-view="queue">صف امروز (' + pending.length + ')</button>' +
+    '<button type="button" class="' + (smsUiView==='settings'?'active':'') + '" data-sms-view="settings">تنظیمات API</button>' +
+    '<button type="button" class="' + (smsUiView==='history'?'active':'') + '" data-sms-view="history">تاریخچه</button>' +
+  '</div>' +
+  (smsUiView === 'queue' ? (
+    '<div class="card">' +
+      '<h2>بررسی روزانه پیام‌های مشتری</h2>' +
+      '<button type="button" class="btn btn-outline btn-sm" id="refreshSmsQueueBtn" style="margin-bottom:10px;">🔄 بروزرسانی پیشنهادها از پرونده خودروها</button>' +
+      pendingHtml +
+    '</div>'
+  ) : '') +
+  settingsForm +
+  historyBlock;
+}
+
 function renderBackup(){
   var rawJson = JSON.stringify(buildExportPayload(), null, 2);
   var previewBlock = showBackupJsonPreview
@@ -1845,6 +2282,85 @@ function attachHandlers(){
   document.querySelectorAll('#bottomNav button').forEach(function(b){
     b.onclick = function(){ switchTab(b.dataset.tab); };
   });
+
+  document.querySelectorAll('[data-sms-view]').forEach(function(b){
+    b.onclick = function(){ smsUiView = b.dataset.smsView; render(); };
+  });
+
+  var refreshSmsBtn = document.getElementById('refreshSmsQueueBtn');
+  if(refreshSmsBtn){
+    refreshSmsBtn.onclick = function(){
+      var n = refreshSmsQueueSuggestions();
+      showToast(n ? (n + ' پیشنهاد جدید به صف اضافه شد.') : 'پیشنهاد جدیدی برای افزودن نبود.');
+      render();
+    };
+  }
+
+  document.querySelectorAll('[data-sms-approve]').forEach(function(b){
+    b.onclick = function(){ approveAndSendSmsQueueItem(b.dataset.smsApprove); };
+  });
+  document.querySelectorAll('[data-sms-dismiss]').forEach(function(b){
+    b.onclick = function(){
+      var reason = prompt('علت رد پیام (اختیاری):', '');
+      if(reason === null) return;
+      dismissSmsQueueItem(b.dataset.smsDismiss, reason);
+    };
+  });
+  document.querySelectorAll('[data-sms-manual]').forEach(function(b){
+    b.onclick = function(){ markSmsQueueItemSentManually(b.dataset.smsManual); };
+  });
+
+  document.querySelectorAll('.sms-msg-edit').forEach(function(ta){
+    ta.onchange = function(){
+      var id = ta.dataset.smsMsg;
+      var item = smsQueue.find(function(q){ return q.id === id; });
+      if(item) item.message = ta.value;
+    };
+  });
+
+  var ippanelForm = document.getElementById('ippanelSettingsForm');
+  if(ippanelForm){
+    ippanelForm.onsubmit = function(e){
+      e.preventDefault();
+      var fd = new FormData(ippanelForm);
+      ippanelSettings = mergeIppanelSettings({
+        enabled: !!fd.get('enabled'),
+        apiKey: String(fd.get('apiKey')||'').trim(),
+        fromNumber: String(fd.get('fromNumber')||'').trim(),
+        apiBase: String(fd.get('apiBase')||'').trim(),
+        shopName: String(fd.get('shopName')||'').trim(),
+        shopPhone: String(fd.get('shopPhone')||'').trim(),
+        daysAfterDelivery: Number(fd.get('daysAfterDelivery')) || 90,
+        kmInterval: Number(fd.get('kmInterval')) || 5000,
+        minDaysBetweenSamePhone: Number(fd.get('minDaysBetweenSamePhone')) || 60,
+        maxPerPhonePerYear: Number(fd.get('maxPerPhonePerYear')) || 3,
+        sendHourFrom: Number(fd.get('sendHourFrom')) || 9,
+        sendHourTo: Number(fd.get('sendHourTo')) || 20,
+        messageTemplate: String(fd.get('messageTemplate')||'')
+      });
+      saveData();
+      showToast('تنظیمات آی‌پی‌پنل ذخیره شد.');
+      render();
+    };
+  }
+
+  var saveJobSmsBtn = document.getElementById('saveJobSmsMetaBtn');
+  if(saveJobSmsBtn){
+    saveJobSmsBtn.onclick = function(){
+      var jid = saveJobSmsBtn.dataset.jobId;
+      var j = jobs.find(function(x){ return x.id === jid; });
+      if(!j) return;
+      var ph = document.getElementById('jobPhoneInput');
+      var km = document.getElementById('jobDeliveryKmInput');
+      var opt = document.getElementById('jobSmsOptOut');
+      j.customerPhone = ph ? normalizeIranPhone(ph.value) : j.customerPhone;
+      j.deliveryKm = km ? km.value.trim() : j.deliveryKm;
+      j.smsOptOut = opt ? opt.checked : false;
+      saveData();
+      showToast('اطلاعات تماس ذخیره شد.');
+      render();
+    };
+  }
 
   document.querySelectorAll('[data-goto-tab]').forEach(function(b){
     b.onclick = function(){ gotoTabFromMore(b.dataset.gotoTab); };
@@ -2438,16 +2954,19 @@ function attachHandlers(){
     jobForm.onsubmit = function(e){
       e.preventDefault();
       var fd = new FormData(jobForm);
-      jobs.push({
+      jobs.push(normalizeJobRecord({
         id: 'job_' + Date.now(),
         carModel: fd.get('carModel').trim(),
         plate: fd.get('plate').trim(),
         customer: fd.get('customer').trim(),
+        customerPhone: normalizeIranPhone(fd.get('customerPhone')),
         km: fd.get('km').trim(),
         complaint: fd.get('complaint').trim(),
         createdDate: todayStr(),
-        status: 'open'
-      });
+        status: 'open',
+        smsOptOut: false,
+        smsCampaigns: {}
+      }));
       saveData(); render();
     };
   }
@@ -2464,7 +2983,14 @@ function attachHandlers(){
   document.querySelectorAll('[data-jobdone]').forEach(function(b){
     b.onclick = function(){
       var j = jobs.find(function(x){ return x.id === b.dataset.jobdone; });
-      if(j && confirm('این خودرو ترخیص و به بایگانی سوابق منتقل شود؟')){ j.status = 'done'; saveData(); render(); }
+      if(j && confirm('این خودرو ترخیص و به بایگانی سوابق منتقل شود؟')){
+        j.status = 'done';
+        j.deliveredDate = todayStr();
+        if(!j.deliveryKm && j.km) j.deliveryKm = j.km;
+        saveData();
+        showToast('خودرو ترخیص شد. پس از ' + (ippanelSettings.daysAfterDelivery||90) + ' روز در صف پیامک پیشنهاد می‌شود.');
+        render();
+      }
     };
   });
   document.querySelectorAll('[data-jobreopen]').forEach(function(b){
